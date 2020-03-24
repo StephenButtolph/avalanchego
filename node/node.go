@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"sync"
-	"time"
 	"unsafe"
 
 	"github.com/ava-labs/salticidae-go"
@@ -47,9 +46,7 @@ import (
 )
 
 const (
-	defaultChannelSize     = 1
-	externalRequestTimeout = 2 * time.Second
-	internalRequestTimeout = 250 * time.Millisecond
+	maxMessageSize = 1 << 25 // maximum size of a message sent with salticidae
 )
 
 // MainNode is the reference for node callbacks
@@ -61,7 +58,7 @@ type Node struct {
 	LogFactory logging.Factory
 	HTTPLog    logging.Logger
 
-	// This node's unique ID used when communicationg with other nodes
+	// This node's unique ID used when communicating with other nodes
 	// (in consensus, for example)
 	ID ids.ShortID
 
@@ -145,6 +142,7 @@ func (n *Node) initNetlib() error {
 	peerConfig := salticidae.NewPeerNetworkConfig()
 	if n.Config.EnableStaking {
 		msgConfig := peerConfig.AsMsgNetworkConfig()
+		msgConfig.MaxMsgSize(maxMessageSize)
 		msgConfig.EnableTLS(true)
 		msgConfig.TLSKeyFile(n.Config.StakingKeyFile)
 		msgConfig.TLSCertFile(n.Config.StakingCertFile)
@@ -163,6 +161,7 @@ func (n *Node) initNetlib() error {
 	if n.Config.ThroughputServerEnabled {
 		// Create the client network
 		msgConfig := salticidae.NewMsgNetworkConfig()
+		msgConfig.MaxMsgSize(maxMessageSize)
 		n.ClientNet = salticidae.NewMsgNetwork(n.EC, msgConfig, &err)
 		if code := err.GetCode(); code != 0 {
 			return errors.New(salticidae.StrError(code))
@@ -216,7 +215,7 @@ func (n *Node) initConsensusNet() {
 
 func (n *Node) initClients() {
 	n.Issuer = &xputtest.Issuer{}
-	n.Issuer.Initialize()
+	n.Issuer.Initialize(n.Log)
 
 	n.CClientAPI = &xputtest.CClientHandler
 	n.CClientAPI.Initialize(n.ClientNet, n.Issuer)
@@ -449,7 +448,7 @@ func (n *Node) initMetricsAPI() {
 func (n *Node) initAdminAPI() {
 	if n.Config.AdminAPIEnabled {
 		n.Log.Info("initializing Admin API")
-		service := admin.NewService(n.Config.NetworkID, n.Log, n.chainManager, n.ValidatorAPI.Connections(), &n.APIServer)
+		service := admin.NewService(n.ID, n.Config.NetworkID, n.Log, n.chainManager, n.ValidatorAPI.Connections(), &n.APIServer)
 		n.APIServer.AddRoute(service, &sync.RWMutex{}, "admin", "", n.HTTPLog)
 	}
 }
