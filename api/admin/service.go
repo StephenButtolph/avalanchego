@@ -181,6 +181,13 @@ func (service *Admin) LockProfile(r *http.Request, args *LockProfileArgs, reply 
 	return service.performance.LockProfile(args.Filename)
 }
 
+// Stacktrace returns the program's current stacktrace
+func (service *Admin) Stacktrace(_ *http.Request, _ *struct{}, reply *string) error {
+	service.log.Debug("Admin: Stacktrace called")
+	*reply = logging.Stacktrace{Global: true}.String()
+	return nil
+}
+
 // AliasArgs are the arguments for calling Alias
 type AliasArgs struct {
 	Endpoint string `json:"endpoint"`
