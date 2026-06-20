@@ -816,7 +816,7 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 // well-formed blocks and rejects blocks with an unsupported (non-zero) version
 // or whose extData does not match the ExtDataHash committed in the header.
 func TestParseBlock(t *testing.T) {
-	ctx, sut := newSUT(t)
+	ctx, sut := newSUT(t, withNetworkID(constants.FujiID))
 
 	genesisID, err := sut.LastAccepted(ctx)
 	require.NoError(t, err, "vm.LastAccepted()")
@@ -829,9 +829,8 @@ func TestParseBlock(t *testing.T) {
 
 	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
-	// Fuji SUT to exercise the recorded extData hash lookup path. Pick any height
-	// from the Fuji set — any entry proves the lookup is reached.
-	_, fujiSUT := newSUT(t, withNetworkID(constants.FujiID))
+	// Pick one recorded Fuji height to exercise the hash lookup. Heights 1, 2, 4
+	// are recorded; 3 is not, so generic pre-AP1 cases use 3.
 	var recordedFujiHeight uint64
 	for h := range extDataHashes[constants.FujiID] {
 		recordedFujiHeight = h
@@ -840,7 +839,6 @@ func TestParseBlock(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		sut     *SUT // nil uses the default sut
 		block   *types.Block
 		wantErr error
 	}{
@@ -873,6 +871,7 @@ func TestParseBlock(t *testing.T) {
 		{
 			name: "pre_ap1",
 			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(3),
 				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithExtDataHash(common.Hash{}),
 			),
@@ -880,6 +879,7 @@ func TestParseBlock(t *testing.T) {
 		{
 			name: "pre_ap1_with_nonzero_header",
 			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(3),
 				cchaintest.WithTimestamp(ap1Time-1),
 			),
 			wantErr: errExtDataHashMismatch,
@@ -887,6 +887,7 @@ func TestParseBlock(t *testing.T) {
 		{
 			name: "pre_ap1_with_extdata",
 			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(3),
 				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithCrossChainTxs(stx),
 			),
@@ -915,12 +916,11 @@ func TestParseBlock(t *testing.T) {
 			wantErr: errExtDataHashMismatch,
 		},
 		{
-			// A Fuji pre-AP1 block at a recorded height with empty extData must
+			// A pre-AP1 block at a recorded Fuji height with empty extData must
 			// fail: the expected hash is the recorded value, not EmptyExtDataHash.
-			// This proves the extDataHashes lookup is reached (on local network the
-			// height would not be recorded and the block would pass).
-			name: "fuji_recorded_height_empty_extdata",
-			sut:  fujiSUT,
+			// This proves the extDataHashes lookup is reached vs the unrecorded
+			// cases above (which use preAP1UnrecordedHeight and pass).
+			name: "recorded_height_no_extdata",
 			block: cchaintest.NewTestBlock(t,
 				cchaintest.WithNumber(recordedFujiHeight),
 				cchaintest.WithTimestamp(ap1Time-1),
@@ -931,15 +931,10 @@ func TestParseBlock(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			activeSUT := sut
-			if tt.sut != nil {
-				activeSUT = tt.sut
-			}
-
 			buf, err := rlp.EncodeToBytes(tt.block)
 			require.NoError(t, err, "rlp.EncodeToBytes(block)")
 
-			got, err := activeSUT.ParseBlock(ctx, buf)
+			got, err := sut.ParseBlock(ctx, buf)
 			require.ErrorIs(t, err, tt.wantErr, "vm.ParseBlock(buf)")
 			if tt.wantErr != nil {
 				return
