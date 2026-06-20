@@ -267,25 +267,23 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: %d", errInvalidBlockVersion, version)
 	}
 
-	{
-		var (
-			gotBytes       = customtypes.BlockExtData(eth)
-			gotHash        = customtypes.CalcExtDataHash(gotBytes)
-			wantHeaderHash = gotHash
-		)
-		if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
-			wantHeaderHash = ethcommon.Hash{}
-			wantHash := customtypes.EmptyExtDataHash
-			if want, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
-				wantHash = want
-			}
-			if gotHash != wantHash {
-				return nil, fmt.Errorf("%w: have %x, want %x", errExtDataUnexpectedHash, gotHash, wantHash)
-			}
+	var (
+		extData        = customtypes.BlockExtData(eth)
+		actualHash     = customtypes.CalcExtDataHash(extData)
+		wantHeaderHash = actualHash
+	)
+	if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
+		wantHeaderHash = ethcommon.Hash{}
+		wantHash := customtypes.EmptyExtDataHash
+		if want, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
+			wantHash = want
 		}
-		if got := customtypes.GetHeaderExtra(eth.Header()).ExtDataHash; got != wantHeaderHash {
-			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, got, wantHeaderHash)
+		if actualHash != wantHash {
+			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataUnexpectedHash, actualHash, wantHash)
 		}
+	}
+	if got := customtypes.GetHeaderExtra(eth.Header()).ExtDataHash; got != wantHeaderHash {
+		return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, got, wantHeaderHash)
 	}
 	return b, nil
 }
