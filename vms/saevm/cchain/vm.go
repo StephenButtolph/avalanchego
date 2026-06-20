@@ -212,6 +212,12 @@ var (
 	// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
 	// BlockBodyExtra carries a Version other than 0, the only supported version.
 	errInvalidBlockVersion = errors.New("invalid block version")
+	// errExtDataHashMismatch is returned by [VM.ParseBlock] when a block's
+	// extData does not hash to the ExtDataHash committed in its header.
+	errExtDataHashMismatch = errors.New("extData hash does not match header")
+	// errExtDataUnexpectedHash is returned by [VM.ParseBlock] when a block's
+	// extData does not correspond to the hardcoded ExtDataHash.
+	errExtDataUnexpectedHash = errors.New("extData hash does not match expected value")
 
 	//go:embed extdata-fuji.json
 	fujiExtDataHashes []byte
@@ -260,25 +266,28 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: %d", errInvalidBlockVersion, version)
 	}
 
-	var (
-		extData               = customtypes.BlockExtData(eth)
-		extDataHash           = customtypes.CalcExtDataHash(extData)
-		wantHeaderExtDataHash = extDataHash
-		wantExtDataHash       = extDataHash
-	)
-	if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
-		wantHeaderExtDataHash = common.Hash{}
-		if expected, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
-			wantExtDataHash = expected
-		} else {
-			wantExtDataHash = customtypes.EmptyExtDataHash
+	{
+		var (
+			gotBytes       = customtypes.BlockExtData(eth)
+			gotHash        = customtypes.CalcExtDataHash(gotBytes)
+			wantHeaderHash = gotHash
+			wantHash       = gotHash
+		)
+		if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
+			wantHeaderHash = common.Hash{}
+			if want, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
+				wantHash = want
+			} else {
+				wantHash = customtypes.EmptyExtDataHash
+			}
 		}
-	}
-	if headerExtra.ExtDataHash != wantHeaderExtDataHash {
-		return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, headerExtra.ExtDataHash, wantHeaderExtDataHash)
-	}
-	if extDataHash != wantExtDataHash {
-		return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, extDataHash, wantExtDataHash)
+
+		if got := customtypes.GetHeaderExtra(eth.Header()).ExtDataHash; got != wantHeaderHash {
+			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, got, wantHeaderHash)
+		}
+		if gotHash != wantHash {
+			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataUnexpectedHash, gotHash, wantHash)
+		}
 	}
 	return b, nil
 }
