@@ -18,7 +18,6 @@ import (
 
 	_ "embed"
 
-	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/triedb"
@@ -42,6 +41,7 @@ import (
 	avadb "github.com/ava-labs/avalanchego/database"
 	corethparams "github.com/ava-labs/avalanchego/graft/coreth/params"
 	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
+	ethcommon "github.com/ava-labs/libevm/common"
 	ethparams "github.com/ava-labs/libevm/params"
 )
 
@@ -223,19 +223,19 @@ var (
 	fujiExtDataHashes []byte
 	//go:embed extdata-mainnet.json
 	mainnetExtDataHashes []byte
-	extDataHashes        map[uint32]map[uint64]common.Hash
+	extDataHashes        map[uint32]map[uint64]ethcommon.Hash
 )
 
 func init() {
-	mainnet := make(map[uint64]common.Hash)
+	mainnet := make(map[uint64]ethcommon.Hash)
 	if err := json.Unmarshal(mainnetExtDataHashes, &mainnet); err != nil {
 		panic(err)
 	}
-	fuji := make(map[uint64]common.Hash)
+	fuji := make(map[uint64]ethcommon.Hash)
 	if err := json.Unmarshal(fujiExtDataHashes, &fuji); err != nil {
 		panic(err)
 	}
-	extDataHashes = map[uint32]map[uint64]common.Hash{
+	extDataHashes = map[uint32]map[uint64]ethcommon.Hash{
 		constants.MainnetID: mainnet,
 		constants.FujiID:    fuji,
 	}
@@ -274,7 +274,7 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 			wantHash       = gotHash
 		)
 		if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
-			wantHeaderHash = common.Hash{}
+			wantHeaderHash = ethcommon.Hash{}
 			if want, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
 				wantHash = want
 			} else {
