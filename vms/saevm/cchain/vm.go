@@ -203,9 +203,11 @@ func (vm *VM) Initialize(
 	return nil
 }
 
-// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
-// BlockBodyExtra carries a Version other than 0, the only supported version.
-var errInvalidBlockVersion = errors.New("invalid block version")
+var (
+	// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
+	// BlockBodyExtra carries a Version other than 0, the only supported version.
+	errInvalidBlockVersion = errors.New("invalid block version")
+)
 
 // ParseBlock parses buf via the embedded SAE VM and additionally performs the
 // C-Chain syntactic checks that the SAE VM is unaware of: that the block's
