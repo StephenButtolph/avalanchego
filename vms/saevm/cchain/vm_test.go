@@ -808,13 +808,14 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 func TestParseBlock(t *testing.T) {
 	ctx, sut := newSUT(t)
 
-	w := newWallet(txtest.NewKey(t), snowtest.Context(t, snowtest.CChainID), nil)
-	tx1 := w.newMinimalTx(t)
+	key := txtest.NewKey(t)
+	w := newWallet(key, sut.ctx, nil)
+	stx := w.newMinimalTx(t)
 
 	// The test network activates ApricotPhase1 at InitiallyActiveTime (~Dec 2020),
 	// so blocks need a timestamp at or after that to exercise the AP1 extData check.
 	// Use the Helicon activation timestamp, which is >= AP1 on every network.
-	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
+	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
 	// Genesis is the only accepted block at startup.
 	genesisID, err := sut.LastAccepted(ctx)
@@ -822,62 +823,76 @@ func TestParseBlock(t *testing.T) {
 	genesisBlk, err := sut.GetBlock(ctx, genesisID)
 	require.NoError(t, err, "vm.GetBlock(genesisID)")
 
-	// A pre-AP1 block with extData in the body but the correct zero header hash,
-	// so the header check passes and only the body check triggers.
-	preAP1WithExtData := func() *types.Block {
-		extData := []byte{1, 2, 3}
-		header := customtypes.WithHeaderExtra(
-			&types.Header{Number: big.NewInt(1)},
-			&customtypes.HeaderExtra{},
-		)
-		blk := types.NewBlock(header, nil, nil, nil, saetest.TrieHasher())
-		customtypes.SetBlockExtra(blk, &customtypes.BlockBodyExtra{ExtData: &extData})
-		return blk
-	}()
-
 	tests := []struct {
 		name    string
 		block   *types.Block
 		wantErr error
 	}{
 		{
-			name:  "valid",
-			block: cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon), cchaintest.WithCrossChainTxs(tx1)),
-		},
-		{
-			name:  "valid_empty",
-			block: cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon)),
-		},
-		{
-			name:    "extdata_hash_mismatch",
-			block:   cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon), cchaintest.WithCrossChainTxs(tx1), cchaintest.WithMismatchedExtDataHash()),
-			wantErr: errExtDataHashMismatch,
-		},
-		{
-			// NewTestBlock with no timestamp defaults to 0 (pre-AP1); it sets
-			// ExtDataHash = EmptyExtDataHash in the header, which is non-zero —
-			// but pre-AP1 requires a zero header hash, so this returns errExtDataHashMismatch.
-			name:    "pre_ap1_non_empty_header",
-			block:   cchaintest.NewTestBlock(t, cchaintest.WithNumber(1)),
-			wantErr: errExtDataHashMismatch,
-		},
-		{
-			// Pre-AP1 block with the correct zero header hash but with extData in
-			// the body: the body hash doesn't match the expected empty value.
-			name:    "pre_ap1_unexpected_extdata",
-			block:   preAP1WithExtData,
-			wantErr: errExtDataUnexpectedHash,
-		},
-		{
-			name:    "invalid_version",
-			block:   cchaintest.NewTestBlock(t, cchaintest.WithBlockVersion(1)),
+			name: "invalid_version",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithBlockVersion(1),
+			),
 			wantErr: errInvalidBlockVersion,
 		},
 		{
-			// Genesis (block 0) predates AP1 on every network: its legacy header
-			// leaves ExtDataHash empty and must be accepted on the pre-AP1 path.
 			name:  "genesis",
 			block: genesisBlk.EthBlock(),
+		},
+		{
+			name: "genesis_with_nonzero_header",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(0),
+			),
+			wantErr: errExtDataHashMismatch,
+		},
+		{
+			name: "genesis_with_extdata",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(0),
+				cchaintest.WithCrossChainTxs(stx),
+			),
+			wantErr: errExtDataUnexpectedHash,
+		},
+		{
+			name: "pre_ap1",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithExtDataHash(common.Hash{}),
+			),
+		},
+		{
+			name:    "pre_ap1_with_nonzero_header",
+			block:   cchaintest.NewTestBlock(t),
+			wantErr: errExtDataHashMismatch,
+		},
+		{
+			name: "pre_ap1_with_extdata",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithCrossChainTxs(stx),
+			),
+			wantErr: errExtDataUnexpectedHash,
+		},
+		{
+			name: "post_ap1_without_data",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time),
+			),
+		},
+		{
+			name: "post_ap1_with_data",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time),
+				cchaintest.WithCrossChainTxs(stx),
+			),
+		},
+		{
+			name: "post_ap1_with_extdata_hash_mismatch",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time),
+				cchaintest.WithCrossChainTxs(stx),
+				cchaintest.WithExtDataHash(common.Hash{1}),
+			),
+			wantErr: errExtDataHashMismatch,
 		},
 	}
 	for _, tt := range tests {

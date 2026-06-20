@@ -73,11 +73,9 @@ func WithCrossChainTxs(txs ...*tx.Tx) BlockOption {
 	})
 }
 
-// WithMismatchedExtDataHash commits a random ExtDataHash that does not match the
-// block's ExtData and disables recomputation, simulating a tampered block.
-func WithMismatchedExtDataHash() BlockOption {
+// WithExtDataHash uses h during block building and disables recomputation.
+func WithExtDataHash(h common.Hash) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
-		h := common.Hash(ids.GenerateTestID())
 		p.extDataHash = &h
 	})
 }
@@ -140,6 +138,6 @@ func NewTamperedBlock(tb testing.TB, number uint64, parent common.Hash, txs ...*
 		WithNumber(number),
 		WithParent(parent),
 		WithCrossChainTxs(txs...),
-		WithMismatchedExtDataHash(),
+		WithExtDataHash(common.Hash(ids.GenerateTestID())),
 	)
 }
