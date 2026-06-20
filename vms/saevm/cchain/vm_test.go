@@ -802,6 +802,9 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 // TestParseBlock verifies that the cchain ParseBlock override accepts
 // well-formed blocks and rejects blocks with an unsupported (non-zero) version
 // or whose extData does not match the ExtDataHash committed in the header.
+// It also verifies that the genesis block is accepted despite its legacy header
+// leaving ExtDataHash empty: bootstrapping re-parses the full ancestry so
+// rejecting genesis here would stall a syncing node's C-Chain indefinitely.
 func TestParseBlock(t *testing.T) {
 	ctx, sut := newSUT(t)
 
@@ -812,6 +815,12 @@ func TestParseBlock(t *testing.T) {
 	// so blocks need a timestamp at or after that to exercise the AP1 extData check.
 	// Use the Helicon activation timestamp, which is >= AP1 on every network.
 	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
+
+	// Genesis is the only accepted block at startup.
+	genesisID, err := sut.LastAccepted(ctx)
+	require.NoError(t, err, "vm.LastAccepted()")
+	genesisBlk, err := sut.GetBlock(ctx, genesisID)
+	require.NoError(t, err, "vm.GetBlock(genesisID)")
 
 	// A pre-AP1 block with extData in the body but the correct zero header hash,
 	// so the header check passes and only the body check triggers.
@@ -864,6 +873,12 @@ func TestParseBlock(t *testing.T) {
 			block:   cchaintest.NewTestBlock(t, cchaintest.WithBlockVersion(1)),
 			wantErr: errInvalidBlockVersion,
 		},
+		{
+			// Genesis (block 0) predates AP1 on every network: its legacy header
+			// leaves ExtDataHash empty and must be accepted on the pre-AP1 path.
+			name:  "genesis",
+			block: genesisBlk.EthBlock(),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -879,26 +894,6 @@ func TestParseBlock(t *testing.T) {
 			require.Equal(t, tt.block.Hash(), got.EthBlock().Hash(), "vm.ParseBlock() block hash")
 		})
 	}
-}
-
-// TestParseBlockAcceptsGenesis verifies that ParseBlock accepts the genesis
-// block even though its legacy header leaves ExtDataHash empty (and so would
-// fail the post-ApricotPhase1 ExtDataHash check that the test network's rules
-// apply). Bootstrapping re-parses the full ancestry, including genesis, so
-// rejecting it here would stall a syncing node's C-Chain indefinitely.
-func TestParseBlockAcceptsGenesis(t *testing.T) {
-	ctx, sut := newSUT(t)
-
-	// Genesis is the only accepted block at startup.
-	genesisID, err := sut.LastAccepted(ctx)
-	require.NoError(t, err, "vm.LastAccepted()")
-
-	genesis, err := sut.GetBlock(ctx, genesisID)
-	require.NoError(t, err, "vm.GetBlock(genesisID)")
-
-	got, err := sut.ParseBlock(ctx, genesis.Bytes())
-	require.NoError(t, err, "vm.ParseBlock(genesis)")
-	require.Equal(t, genesisID, got.ID(), "vm.ParseBlock(genesis) block ID")
 }
 
 // TestVerifyBlockRejectsMismatchedTime verifies that the VM rejects a received
