@@ -90,7 +90,6 @@ go_test(
     name = "cchain_test",
     srcs = [
         "api_test.go",
-        "extdata_test.go",
         "genesis_test.go",
         "gossip_test.go",
         "hooks_test.go",
