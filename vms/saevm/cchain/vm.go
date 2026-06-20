@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
 	"github.com/ava-labs/avalanchego/graft/evm/utils/rpc"
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
@@ -30,12 +31,15 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/vms/evm/database"
 	"github.com/ava-labs/avalanchego/vms/saevm/blocks"
+	"github.com/ava-labs/avalanchego/vms/saevm/cchain/extdata"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/state"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/txpool"
 	"github.com/ava-labs/avalanchego/vms/saevm/sae"
 	"github.com/ava-labs/avalanchego/vms/saevm/saedb"
 
 	avadb "github.com/ava-labs/avalanchego/database"
+	corethparams "github.com/ava-labs/avalanchego/graft/coreth/params"
+	ethparams "github.com/ava-labs/libevm/params"
 )
 
 // VM wraps an [sae.VM] with the cross-chain pieces specific to the C-Chain.
@@ -50,6 +54,8 @@ type VM struct {
 	now func() time.Time
 
 	ctx          *snow.Context
+	chainConfig  *ethparams.ChainConfig
+	genesisID    ids.ID
 	state        *state.State
 	txpool       *txpool.Txpool
 	gossipSet    *gossip.BloomSet[*gossipTx]
@@ -99,6 +105,7 @@ func (vm *VM) Initialize(
 	if err != nil {
 		return fmt.Errorf("setting up genesis: %w", err)
 	}
+	vm.genesisID = ids.ID(genesisBlock.Hash())
 
 	vm.state, err = state.New(snowCtx, avaDB)
 	if err != nil {
@@ -134,7 +141,7 @@ func (vm *VM) Initialize(
 	vm.onClose = append(vm.onClose, vm.VM.Shutdown)
 
 	const maxTxPoolSize = 1024
-	vm.txpool, err = txpool.New(snowCtx, chainConfig, pendingTxs, vm.VM, maxTxPoolSize)
+	vm.txpool, err = txpool.New(snowCtx, vm.chainConfig, pendingTxs, vm.VM, maxTxPoolSize)
 	if err != nil {
 		return fmt.Errorf("creating txpool: %w", err)
 	}
@@ -200,28 +207,38 @@ func (vm *VM) Initialize(
 	return nil
 }
 
-var (
-	// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
-	// BlockBodyExtra carries a Version other than 0, the only supported version.
-	errInvalidBlockVersion = errors.New("invalid block version")
-	// errExtDataHashMismatch is returned by [VM.ParseBlock] when a block's extData
-	// does not hash to the ExtDataHash committed in its header.
-	errExtDataHashMismatch = errors.New("extData hash does not match header")
-)
+// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
+// BlockBodyExtra carries a Version other than 0, the only supported version.
+var errInvalidBlockVersion = errors.New("invalid block version")
 
 // ParseBlock parses buf via the embedded SAE VM and additionally performs the
 // C-Chain syntactic checks that the SAE VM is unaware of: that the block's
 // BlockBodyExtra Version is 0 (the only supported version) and that its extData
-// matches the ExtDataHash committed in the header.
+// is consistent with the header's ExtDataHash commitment.
 //
 // The block ID is the header hash. The header neither hashes the body's Version
-// nor its extData bytes (it commits only ExtDataHash), so a block with a
-// tampered Version or extData keeps the same ID. This override is the boundary
-// that rejects such blocks before they are accepted, persisted, or executed.
+// nor its extData bytes (from ApricotPhase1 it commits only ExtDataHash, and
+// before then nothing at all), so a block with a tampered Version or extData
+// keeps the same ID. This override is the boundary that rejects such blocks
+// before they are accepted, persisted, or executed.
+//
+// The extData check is delegated to [extdata.VerifyExtDataHash] so it stays
+// identical to coreth's, including the handling of pre-ApricotPhase1 blocks
+// (such as genesis) that left ExtDataHash empty. Bootstrapping fetches the full
+// ancestry, so these legacy blocks must parse here even on a post-Helicon node.
 func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error) {
 	b, err := vm.VM.ParseBlock(ctx, buf)
 	if err != nil {
 		return nil, err
+	}
+
+	// Skip the C-Chain-specific checks for genesis, matching coreth: genesis is
+	// the trusted root that is already accepted and never verified, yet
+	// bootstrapping still re-parses it from the wire. Its legacy header left
+	// ExtDataHash empty, so the ApricotPhase1 check below would otherwise reject
+	// it on networks (e.g. local/e2e) where ApricotPhase1 is active at genesis.
+	if b.ID() == vm.genesisID {
+		return b, nil
 	}
 
 	eth := b.EthBlock()
@@ -229,14 +246,9 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: %d", errInvalidBlockVersion, version)
 	}
 
-	extData := customtypes.BlockExtData(eth)
-	// TODO: Handle pre-AP1 blocks, which incorrectly did not set ExtDataHash.
-	// This isn't needed prior to Helicon, but will be required to fully remove
-	// coreth.
-	claimed := customtypes.GetHeaderExtra(eth.Header()).ExtDataHash
-	actual := customtypes.CalcExtDataHash(extData)
-	if claimed != actual {
-		return nil, fmt.Errorf("%w: header %s, extData %s", errExtDataHashMismatch, claimed, actual)
+	isApricotPhase1 := corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time())
+	if err := extdata.VerifyExtDataHash(isApricotPhase1, eth, extdata.Hashes(vm.ctx.NetworkID)); err != nil {
+		return nil, err
 	}
 	return b, nil
 }

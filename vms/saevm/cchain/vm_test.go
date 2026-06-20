@@ -808,6 +808,13 @@ func TestParseBlock(t *testing.T) {
 	w := newWallet(txtest.NewKey(t), snowtest.Context(t, snowtest.CChainID), nil)
 	tx1 := w.newMinimalTx(t)
 
+	// SAE only runs the C-Chain post-Helicon, so all blocks parsed in normal
+	// operation are post-ApricotPhase1 and subject to the strict ExtDataHash
+	// check. Build the fixtures at the Helicon activation time to exercise it.
+	// The ExtDataHash rules themselves are covered by the extdata package; here
+	// we exercise the cchain-specific checks and that valid blocks round-trip.
+	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
+
 	tests := []struct {
 		name    string
 		block   *types.Block
@@ -815,20 +822,15 @@ func TestParseBlock(t *testing.T) {
 	}{
 		{
 			name:  "valid",
-			block: cchaintest.NewBlock(t, 1, common.Hash{}, tx1),
+			block: cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon), cchaintest.WithCrossChainTxs(tx1)),
 		},
 		{
 			name:  "valid_empty",
-			block: cchaintest.NewBlock(t, 1, common.Hash{}),
-		},
-		{
-			name:    "extdata_hash_mismatch",
-			block:   cchaintest.NewTamperedBlock(t, 1, common.Hash{}, tx1),
-			wantErr: errExtDataHashMismatch,
+			block: cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon)),
 		},
 		{
 			name:    "invalid_version",
-			block:   cchaintest.NewTestBlock(t, cchaintest.WithBlockVersion(1)),
+			block:   cchaintest.NewTestBlock(t, cchaintest.WithTimestamp(postHelicon), cchaintest.WithBlockVersion(1)),
 			wantErr: errInvalidBlockVersion,
 		},
 	}
@@ -842,10 +844,25 @@ func TestParseBlock(t *testing.T) {
 			if tt.wantErr != nil {
 				return
 			}
-
 			require.Equal(t, tt.block.Hash(), got.EthBlock().Hash(), "vm.ParseBlock() block hash")
 		})
 	}
+}
+
+// TestParseBlockAcceptsGenesis verifies that ParseBlock accepts the genesis
+// block even though its legacy header leaves ExtDataHash empty (and so would
+// fail the post-ApricotPhase1 ExtDataHash check that the test network's rules
+// apply). Bootstrapping re-parses the full ancestry, including genesis, so
+// rejecting it here would stall a syncing node's C-Chain indefinitely.
+func TestParseBlockAcceptsGenesis(t *testing.T) {
+	ctx, sut := newSUT(t)
+
+	genesis, err := sut.GetBlock(ctx, sut.genesisID)
+	require.NoError(t, err, "vm.GetBlock(genesisID)")
+
+	got, err := sut.ParseBlock(ctx, genesis.Bytes())
+	require.NoError(t, err, "vm.ParseBlock(genesis)")
+	require.Equal(t, sut.genesisID, got.ID(), "vm.ParseBlock(genesis) block ID")
 }
 
 // TestVerifyBlockRejectsMismatchedTime verifies that the VM rejects a received

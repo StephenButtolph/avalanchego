@@ -57,6 +57,7 @@ go_library(
         "//vms/evm/acp226",
         "//vms/evm/database",
         "//vms/saevm/blocks",
+        "//vms/saevm/cchain/extdata",
         "//vms/saevm/cchain/state",
         "//vms/saevm/cchain/tx",
         "//vms/saevm/cchain/txpool",
