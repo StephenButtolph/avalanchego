@@ -38,6 +38,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/snow/snowtest"
+	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/logging/loggingtest"
@@ -83,10 +84,11 @@ func (s *SUT) Sender() *saetest.Sender { return s.sender }
 
 type (
 	sutConfig struct {
-		genesis    core.Genesis
-		nodeID     ids.NodeID
+		genesis   core.Genesis
+		nodeID    ids.NodeID
+		networkID uint32
 		validators set.Set[ids.NodeID]
-		now        func() time.Time
+		now       func() time.Time
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -110,6 +112,14 @@ func withNodeID(id ids.NodeID) sutOption {
 func withValidators(vdrs set.Set[ids.NodeID]) sutOption {
 	return options.Func[sutConfig](func(c *sutConfig) {
 		c.validators = vdrs
+	})
+}
+
+// withNetworkID overrides the SUT's network ID, which controls which recorded
+// extData hash set [VM.ParseBlock] consults for pre-ApricotPhase1 blocks.
+func withNetworkID(id uint32) sutOption {
+	return options.Func[sutConfig](func(c *sutConfig) {
+		c.networkID = id
 	})
 }
 
@@ -155,6 +165,9 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	memory := atomic.NewMemory(prefixdb.New([]byte("sharedmemory"), db))
 	snowCtx := snowtest.Context(tb, snowtest.CChainID)
 	snowCtx.NodeID = cfg.nodeID
+	if cfg.networkID != 0 {
+		snowCtx.NetworkID = cfg.networkID
+	}
 	snowCtx.SharedMemory = memory.NewSharedMemory(snowtest.CChainID)
 	log := loggingtest.New(tb, logging.Debug)
 	snowCtx.Log = log
@@ -816,8 +829,18 @@ func TestParseBlock(t *testing.T) {
 
 	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
+	// Fuji SUT to exercise the recorded extData hash lookup path. Pick any height
+	// from the Fuji set — any entry proves the lookup is reached.
+	_, fujiSUT := newSUT(t, withNetworkID(constants.FujiID))
+	var recordedFujiHeight uint64
+	for h := range extDataHashes[constants.FujiID] {
+		recordedFujiHeight = h
+		break
+	}
+
 	tests := []struct {
 		name    string
+		sut     *SUT // nil uses the default sut
 		block   *types.Block
 		wantErr error
 	}{
@@ -891,13 +914,32 @@ func TestParseBlock(t *testing.T) {
 			),
 			wantErr: errExtDataHashMismatch,
 		},
+		{
+			// A Fuji pre-AP1 block at a recorded height with empty extData must
+			// fail: the expected hash is the recorded value, not EmptyExtDataHash.
+			// This proves the extDataHashes lookup is reached (on local network the
+			// height would not be recorded and the block would pass).
+			name: "fuji_recorded_height_empty_extdata",
+			sut:  fujiSUT,
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(recordedFujiHeight),
+				cchaintest.WithTimestamp(ap1Time-1),
+				cchaintest.WithExtDataHash(common.Hash{}),
+			),
+			wantErr: errExtDataUnexpectedHash,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			activeSUT := sut
+			if tt.sut != nil {
+				activeSUT = tt.sut
+			}
+
 			buf, err := rlp.EncodeToBytes(tt.block)
 			require.NoError(t, err, "rlp.EncodeToBytes(block)")
 
-			got, err := sut.ParseBlock(ctx, buf)
+			got, err := activeSUT.ParseBlock(ctx, buf)
 			require.ErrorIs(t, err, tt.wantErr, "vm.ParseBlock(buf)")
 			if tt.wantErr != nil {
 				return
