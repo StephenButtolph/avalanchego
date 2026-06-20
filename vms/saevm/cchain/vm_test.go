@@ -84,11 +84,11 @@ func (s *SUT) Sender() *saetest.Sender { return s.sender }
 
 type (
 	sutConfig struct {
-		genesis   core.Genesis
-		nodeID    ids.NodeID
-		networkID uint32
+		genesis    core.Genesis
+		nodeID     ids.NodeID
+		networkID  uint32
 		validators set.Set[ids.NodeID]
-		now       func() time.Time
+		now        func() time.Time
 	}
 	sutOption = options.Option[sutConfig]
 )
@@ -149,8 +149,9 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 				Difficulty: big.NewInt(0), // irrelevant but required to marshal
 				Alloc:      types.GenesisAlloc{},
 			},
-			nodeID: ids.GenerateTestNodeID(),
-			now:    time.Now,
+			nodeID:    ids.GenerateTestNodeID(),
+			networkID: constants.UnitTestID,
+			now:       time.Now,
 		}, opts...)
 		vm = &VM{
 			pullGossipPeriod: 100 * time.Millisecond,
@@ -165,9 +166,7 @@ func newSUT(tb testing.TB, opts ...sutOption) (context.Context, *SUT) {
 	memory := atomic.NewMemory(prefixdb.New([]byte("sharedmemory"), db))
 	snowCtx := snowtest.Context(tb, snowtest.CChainID)
 	snowCtx.NodeID = cfg.nodeID
-	if cfg.networkID != 0 {
-		snowCtx.NetworkID = cfg.networkID
-	}
+	snowCtx.NetworkID = cfg.networkID
 	snowCtx.SharedMemory = memory.NewSharedMemory(snowtest.CChainID)
 	log := loggingtest.New(tb, logging.Debug)
 	snowCtx.Log = log
@@ -829,14 +828,10 @@ func TestParseBlock(t *testing.T) {
 
 	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
-	// Pick one recorded Fuji height to exercise the hash lookup. Heights 1, 2, 4
-	// are recorded; 3 is not, so generic pre-AP1 cases use 3.
-	var recordedFujiHeight uint64
-	for h := range extDataHashes[constants.FujiID] {
-		recordedFujiHeight = h
-		break
-	}
-
+	const (
+		preAP1RecordedHeight   = 1
+		preAP1UnrecordedHeight = 3
+	)
 	tests := []struct {
 		name    string
 		block   *types.Block
@@ -922,7 +917,7 @@ func TestParseBlock(t *testing.T) {
 			// cases above (which use preAP1UnrecordedHeight and pass).
 			name: "recorded_height_no_extdata",
 			block: cchaintest.NewTestBlock(t,
-				cchaintest.WithNumber(recordedFujiHeight),
+				cchaintest.WithNumber(preAP1RecordedHeight),
 				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithExtDataHash(common.Hash{}),
 			),
