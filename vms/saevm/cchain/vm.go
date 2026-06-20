@@ -8,6 +8,7 @@ package cchain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 	"sync"
 	"time"
 
+	_ "embed"
+
+	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/rawdb"
 	"github.com/ava-labs/libevm/core/txpool/legacypool"
 	"github.com/ava-labs/libevm/triedb"
@@ -26,8 +30,8 @@ import (
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
-	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/utils/bloom"
+	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/vms/evm/database"
 	"github.com/ava-labs/avalanchego/vms/saevm/blocks"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/state"
@@ -37,6 +41,7 @@ import (
 
 	avadb "github.com/ava-labs/avalanchego/database"
 	corethparams "github.com/ava-labs/avalanchego/graft/coreth/params"
+	snowcommon "github.com/ava-labs/avalanchego/snow/engine/common"
 	ethparams "github.com/ava-labs/libevm/params"
 )
 
@@ -74,8 +79,8 @@ func (vm *VM) Initialize(
 	genesisBytes []byte,
 	_ []byte,
 	configBytes []byte,
-	_ []*common.Fx,
-	appSender common.AppSender,
+	_ []*snowcommon.Fx,
+	appSender snowcommon.AppSender,
 ) (retErr error) {
 	defer func() {
 		if retErr != nil {
@@ -207,7 +212,28 @@ var (
 	// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
 	// BlockBodyExtra carries a Version other than 0, the only supported version.
 	errInvalidBlockVersion = errors.New("invalid block version")
+
+	//go:embed extdata-fuji.json
+	fujiExtDataHashes []byte
+	//go:embed extdata-mainnet.json
+	mainnetExtDataHashes []byte
+	extDataHashes        map[uint32]map[uint64]common.Hash
 )
+
+func init() {
+	mainnet := make(map[uint64]common.Hash)
+	if err := json.Unmarshal(mainnetExtDataHashes, &mainnet); err != nil {
+		panic(err)
+	}
+	fuji := make(map[uint64]common.Hash)
+	if err := json.Unmarshal(fujiExtDataHashes, &fuji); err != nil {
+		panic(err)
+	}
+	extDataHashes = map[uint32]map[uint64]common.Hash{
+		constants.MainnetID: mainnet,
+		constants.FujiID:    fuji,
+	}
+}
 
 // ParseBlock parses buf via the embedded SAE VM and additionally performs the
 // C-Chain syntactic checks that the SAE VM is unaware of: that the block's
@@ -234,11 +260,25 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: %d", errInvalidBlockVersion, version)
 	}
 
-	// Genesis (block 0) predates ApricotPhase1 on every network, so always
-	// apply the pre-AP1 extData rules for it regardless of chain config.
-	isApricotPhase1 := eth.NumberU64() != 0 && corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time())
-	if err := verifyExtDataHash(isApricotPhase1, eth, extDataHashes(vm.ctx.NetworkID)); err != nil {
-		return nil, err
+	var (
+		extData               = customtypes.BlockExtData(eth)
+		extDataHash           = customtypes.CalcExtDataHash(extData)
+		wantHeaderExtDataHash = extDataHash
+		wantExtDataHash       = extDataHash
+	)
+	if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
+		wantHeaderExtDataHash = common.Hash{}
+		if expected, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
+			wantExtDataHash = expected
+		} else {
+			wantExtDataHash = customtypes.EmptyExtDataHash
+		}
+	}
+	if headerExtra.ExtDataHash != wantHeaderExtDataHash {
+		return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, headerExtra.ExtDataHash, wantHeaderExtDataHash)
+	}
+	if extDataHash != wantExtDataHash {
+		return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, extDataHash, wantExtDataHash)
 	}
 	return b, nil
 }
@@ -271,7 +311,7 @@ func (vm *VM) CreateHandlers(ctx context.Context) (map[string]http.Handler, erro
 
 // WaitForEvent waits for a transaction to be in the txpool or for the SAE VM to
 // produce an event.
-func (vm *VM) WaitForEvent(ctx context.Context) (common.Message, error) {
+func (vm *VM) WaitForEvent(ctx context.Context) (snowcommon.Message, error) {
 	// TODO(StephenButtolph): Do not busy loop with [common.PendingTxs]. The
 	// txpools are cleared after block execution, so we may still have
 	// transactions in the txpool while blocks containing those transactions are
@@ -281,7 +321,7 @@ func (vm *VM) WaitForEvent(ctx context.Context) (common.Message, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	type result struct {
-		msg common.Message
+		msg snowcommon.Message
 		err error
 	}
 	results := make(chan result, 2)
@@ -293,7 +333,7 @@ func (vm *VM) WaitForEvent(ctx context.Context) (common.Message, error) {
 	go func() {
 		defer cancel()
 		err := vm.txpool.AwaitTxs(ctx)
-		results <- result{common.PendingTxs, err}
+		results <- result{snowcommon.PendingTxs, err}
 	}()
 
 	r := <-results
