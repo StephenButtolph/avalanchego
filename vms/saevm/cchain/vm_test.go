@@ -829,8 +829,8 @@ func TestParseBlock(t *testing.T) {
 	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
 	const (
-		preAP1RecordedHeight   = 1
-		preAP1UnrecordedHeight = 3
+		preAP1WithDataHeight    = 1
+		preAP1WithoutDataHeight = 3
 	)
 	tests := []struct {
 		name    string
@@ -864,26 +864,39 @@ func TestParseBlock(t *testing.T) {
 			wantErr: errExtDataUnexpectedHash,
 		},
 		{
-			name: "pre_ap1",
+			name: "pre_ap1_with_extdata",
 			block: cchaintest.NewTestBlock(t,
-				cchaintest.WithNumber(3),
+				cchaintest.WithNumber(preAP1WithDataHeight),
+				cchaintest.WithTimestamp(ap1Time-1),
+				cchaintest.WithExtDataHash(common.Hash{}),
+				// See Fuji block #1's canonical representation for the source
+				// of the bytes.
+				cchaintest.WithExtData(common.Hex2Bytes("0x000000000000000000057fc93d85c6d62c5b2ac0b519c87010ea5294012d1e407030d6acd0021cac10d5ab68eb1ee142a05cfe768c36e11f0b596db5a3c6c77aabe665dad9e638ca94f70000000106eb57070eed14d04c3e6fcfec2b670c7bbece079ad1ff97dd407e416796aea6000000013d9bdac0ed1d761330cf680efdeb1a42159eb387d6d2950c96f7d28f61bbe2aa00000005000000003b9aca00000000010000000000000001572f4d80f10f663b5049f789546f25f70bb62a7f000000003b9aca003d9bdac0ed1d761330cf680efdeb1a42159eb387d6d2950c96f7d28f61bbe2aa000000010000000900000001c1b8fcb9824bf9fde4d506768250a40fde0027a7eed23ad89ea49a87fce892df5b082103b08bbc5d20b3c107ad33dfc880fbbb96cfa0bf8752e5c93b979bad6200")),
+			),
+		},
+		{
+			name: "pre_ap1_missing_extdata",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(preAP1WithDataHeight),
+				cchaintest.WithTimestamp(ap1Time-1),
+				cchaintest.WithExtDataHash(common.Hash{}),
+			),
+			wantErr: errExtDataUnexpectedHash,
+		},
+		{
+			name: "pre_ap1_without_extdata",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithNumber(preAP1WithoutDataHeight),
 				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithExtDataHash(common.Hash{}),
 			),
 		},
 		{
-			name: "pre_ap1_with_nonzero_header",
+			name: "pre_ap1_unexpected_extdata",
 			block: cchaintest.NewTestBlock(t,
-				cchaintest.WithNumber(3),
+				cchaintest.WithNumber(preAP1WithoutDataHeight),
 				cchaintest.WithTimestamp(ap1Time-1),
-			),
-			wantErr: errExtDataHashMismatch,
-		},
-		{
-			name: "pre_ap1_with_extdata",
-			block: cchaintest.NewTestBlock(t,
-				cchaintest.WithNumber(3),
-				cchaintest.WithTimestamp(ap1Time-1),
+				cchaintest.WithExtDataHash(common.Hash{}),
 				cchaintest.WithCrossChainTxs(stx),
 			),
 			wantErr: errExtDataUnexpectedHash,
@@ -909,19 +922,6 @@ func TestParseBlock(t *testing.T) {
 				cchaintest.WithExtDataHash(common.Hash{1}),
 			),
 			wantErr: errExtDataHashMismatch,
-		},
-		{
-			// A pre-AP1 block at a recorded Fuji height with empty extData must
-			// fail: the expected hash is the recorded value, not EmptyExtDataHash.
-			// This proves the extDataHashes lookup is reached vs the unrecorded
-			// cases above (which use preAP1UnrecordedHeight and pass).
-			name: "recorded_height_no_extdata",
-			block: cchaintest.NewTestBlock(t,
-				cchaintest.WithNumber(preAP1RecordedHeight),
-				cchaintest.WithTimestamp(ap1Time-1),
-				cchaintest.WithExtDataHash(common.Hash{}),
-			),
-			wantErr: errExtDataUnexpectedHash,
 		},
 	}
 	for _, tt := range tests {

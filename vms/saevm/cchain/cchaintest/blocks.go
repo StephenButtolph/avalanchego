@@ -29,6 +29,7 @@ type blockProperties struct {
 	parent        common.Hash
 	ethTxs        []*types.Transaction
 	crossChainTxs []*tx.Tx
+	extData       *[]byte
 	extDataHash   *common.Hash
 	version       uint32
 }
@@ -72,6 +73,13 @@ func WithCrossChainTxs(txs ...*tx.Tx) BlockOption {
 	})
 }
 
+// WithExtData sets the raw ExtData bytes for the block.
+func WithExtData(data []byte) BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		p.extData = &data
+	})
+}
+
 // WithExtDataHash uses h during block building and disables recomputation.
 func WithExtDataHash(h common.Hash) BlockOption {
 	return options.Func[blockProperties](func(p *blockProperties) {
@@ -98,6 +106,9 @@ func NewTestBlock(tb testing.TB, opts ...BlockOption) *types.Block {
 
 	extData, err := tx.MarshalSlice(props.crossChainTxs)
 	require.NoErrorf(tb, err, "tx.MarshalSlice(%d txs)", len(props.crossChainTxs))
+	if props.extData != nil {
+		extData = *props.extData
+	}
 
 	// By default the header commits the ExtDataHash computed from the block's
 	// own ExtData; a caller-supplied hash overrides this to simulate tampering.
