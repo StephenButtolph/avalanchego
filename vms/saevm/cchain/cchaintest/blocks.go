@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
-	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/tx"
 	"github.com/ava-labs/avalanchego/vms/saevm/saetest"
 )
@@ -128,16 +127,4 @@ func NewTestBlock(tb testing.TB, opts ...BlockOption) *types.Block {
 func NewBlock(tb testing.TB, number uint64, parent common.Hash, txs ...*tx.Tx) *types.Block {
 	tb.Helper()
 	return NewTestBlock(tb, WithNumber(number), WithParent(parent), WithCrossChainTxs(txs...))
-}
-
-// NewTamperedBlock returns a block that encodes txs but whose header commits an
-// ExtDataHash that does not match its ExtData, simulating tampering.
-func NewTamperedBlock(tb testing.TB, number uint64, parent common.Hash, txs ...*tx.Tx) *types.Block {
-	tb.Helper()
-	return NewTestBlock(tb,
-		WithNumber(number),
-		WithParent(parent),
-		WithCrossChainTxs(txs...),
-		WithExtDataHash(common.Hash(ids.GenerateTestID())),
-	)
 }
