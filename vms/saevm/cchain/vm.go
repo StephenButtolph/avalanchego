@@ -51,11 +51,11 @@ type VM struct {
 	// now is the clock provided to the [sae.VM] and is used for block building.
 	now func() time.Time
 
-	ctx         *snow.Context
-	chainConfig *ethparams.ChainConfig
-	state       *state.State
-	txpool      *txpool.Txpool
-	gossipSet   *gossip.BloomSet[*gossipTx]
+	ctx          *snow.Context
+	chainConfig  *ethparams.ChainConfig
+	state        *state.State
+	txpool       *txpool.Txpool
+	gossipSet    *gossip.BloomSet[*gossipTx]
 	pushGossiper *gossip.PushGossiper[*gossipTx]
 
 	// onClose are executed in reverse order during [VM.Shutdown]. If a resource

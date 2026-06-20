@@ -73,6 +73,15 @@ func WithCrossChainTxs(txs ...*tx.Tx) BlockOption {
 	})
 }
 
+// WithMismatchedExtDataHash commits a random ExtDataHash that does not match the
+// block's ExtData and disables recomputation, simulating a tampered block.
+func WithMismatchedExtDataHash() BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		h := common.Hash(ids.GenerateTestID())
+		p.extDataHash = &h
+	})
+}
+
 // WithBlockVersion sets the block's BlockBodyExtra Version. The default of 0 is
 // the only version accepted by the C-Chain ParseBlock; a non-zero value
 // simulates a block declaring an unsupported version.
@@ -114,15 +123,6 @@ func NewTestBlock(tb testing.TB, opts ...BlockOption) *types.Block {
 		ExtData: &extData,
 	})
 	return block
-}
-
-// WithMismatchedExtDataHash commits a random ExtDataHash that does not match the
-// block's ExtData and disables recomputation, simulating a tampered block.
-func WithMismatchedExtDataHash() BlockOption {
-	return options.Func[blockProperties](func(p *blockProperties) {
-		h := common.Hash(ids.GenerateTestID())
-		p.extDataHash = &h
-	})
 }
 
 // NewBlock returns a block whose ExtData encodes txs and whose header is

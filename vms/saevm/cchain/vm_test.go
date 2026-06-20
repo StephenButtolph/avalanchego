@@ -808,9 +808,9 @@ func TestParseBlock(t *testing.T) {
 	w := newWallet(txtest.NewKey(t), snowtest.Context(t, snowtest.CChainID), nil)
 	tx1 := w.newMinimalTx(t)
 
-	// SAE only runs the C-Chain post-Helicon, so all blocks parsed in normal
-	// operation are post-ApricotPhase1 and subject to the strict ExtDataHash
-	// check. Build the fixtures at the Helicon activation time to exercise it.
+	// The test network activates ApricotPhase1 at InitiallyActiveTime (~Dec 2020),
+	// so blocks need a timestamp at or after that to exercise the AP1 extData check.
+	// Use the Helicon activation timestamp, which is >= AP1 on every network.
 	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
 
 	tests := []struct {
@@ -833,7 +833,7 @@ func TestParseBlock(t *testing.T) {
 		},
 		{
 			name:    "invalid_version",
-			block:   cchaintest.NewTestBlock(t, cchaintest.WithTimestamp(postHelicon), cchaintest.WithBlockVersion(1)),
+			block:   cchaintest.NewTestBlock(t, cchaintest.WithBlockVersion(1)),
 			wantErr: errInvalidBlockVersion,
 		},
 	}
@@ -847,6 +847,7 @@ func TestParseBlock(t *testing.T) {
 			if tt.wantErr != nil {
 				return
 			}
+
 			require.Equal(t, tt.block.Hash(), got.EthBlock().Hash(), "vm.ParseBlock() block hash")
 		})
 	}
