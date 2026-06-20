@@ -802,9 +802,6 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 // TestParseBlock verifies that the cchain ParseBlock override accepts
 // well-formed blocks and rejects blocks with an unsupported (non-zero) version
 // or whose extData does not match the ExtDataHash committed in the header.
-// It also verifies that the genesis block is accepted despite its legacy header
-// leaving ExtDataHash empty: bootstrapping re-parses the full ancestry so
-// rejecting genesis here would stall a syncing node's C-Chain indefinitely.
 func TestParseBlock(t *testing.T) {
 	ctx, sut := newSUT(t)
 
