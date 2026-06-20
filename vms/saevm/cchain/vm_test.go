@@ -808,20 +808,16 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 func TestParseBlock(t *testing.T) {
 	ctx, sut := newSUT(t)
 
-	key := txtest.NewKey(t)
-	w := newWallet(key, sut.ctx, nil)
-	stx := w.newMinimalTx(t)
-
-	// The test network activates ApricotPhase1 at InitiallyActiveTime (~Dec 2020),
-	// so blocks need a timestamp at or after that to exercise the AP1 extData check.
-	// Use the Helicon activation timestamp, which is >= AP1 on every network.
-	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
-
-	// Genesis is the only accepted block at startup.
 	genesisID, err := sut.LastAccepted(ctx)
 	require.NoError(t, err, "vm.LastAccepted()")
 	genesisBlk, err := sut.GetBlock(ctx, genesisID)
 	require.NoError(t, err, "vm.GetBlock(genesisID)")
+
+	key := txtest.NewKey(t)
+	w := newWallet(key, sut.ctx, nil)
+	stx := w.newMinimalTx(t)
+
+	ap1Time := *cparams.GetExtra(sut.chainConfig).ApricotPhase1BlockTimestamp
 
 	tests := []struct {
 		name    string
@@ -857,17 +853,21 @@ func TestParseBlock(t *testing.T) {
 		{
 			name: "pre_ap1",
 			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithExtDataHash(common.Hash{}),
 			),
 		},
 		{
-			name:    "pre_ap1_with_nonzero_header",
-			block:   cchaintest.NewTestBlock(t),
+			name: "pre_ap1_with_nonzero_header",
+			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time-1),
+			),
 			wantErr: errExtDataHashMismatch,
 		},
 		{
 			name: "pre_ap1_with_extdata",
 			block: cchaintest.NewTestBlock(t,
+				cchaintest.WithTimestamp(ap1Time-1),
 				cchaintest.WithCrossChainTxs(stx),
 			),
 			wantErr: errExtDataUnexpectedHash,
