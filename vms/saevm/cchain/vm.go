@@ -245,7 +245,7 @@ func init() {
 // ParseBlock parses buf via the embedded SAE VM and additionally performs the
 // C-Chain syntactic checks that the SAE VM is unaware of: that the block's
 // BlockBodyExtra Version is 0 (the only supported version) and that its extData
-// is consistent with the header's ExtDataHash commitment.
+// matches the ExtDataHash committed in the header.
 //
 // The block ID is the header hash. The header neither hashes the body's Version
 // nor its extData bytes (it commits only ExtDataHash), so a block with a
