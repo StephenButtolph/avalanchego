@@ -813,6 +813,19 @@ func TestParseBlock(t *testing.T) {
 	// Use the Helicon activation timestamp, which is >= AP1 on every network.
 	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
 
+	// A pre-AP1 block with extData in the body but the correct zero header hash,
+	// so the header check passes and only the body check triggers.
+	preAP1WithExtData := func() *types.Block {
+		extData := []byte{1, 2, 3}
+		header := customtypes.WithHeaderExtra(
+			&types.Header{Number: big.NewInt(1)},
+			&customtypes.HeaderExtra{},
+		)
+		blk := types.NewBlock(header, nil, nil, nil, saetest.TrieHasher())
+		customtypes.SetBlockExtra(blk, &customtypes.BlockBodyExtra{ExtData: &extData})
+		return blk
+	}()
+
 	tests := []struct {
 		name    string
 		block   *types.Block
@@ -830,6 +843,21 @@ func TestParseBlock(t *testing.T) {
 			name:    "extdata_hash_mismatch",
 			block:   cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon), cchaintest.WithCrossChainTxs(tx1), cchaintest.WithMismatchedExtDataHash()),
 			wantErr: errExtDataHashMismatch,
+		},
+		{
+			// NewTestBlock with no timestamp defaults to 0 (pre-AP1); it sets
+			// ExtDataHash = EmptyExtDataHash in the header, which is non-zero —
+			// but pre-AP1 requires a zero header hash, so this returns errExtDataHashMismatch.
+			name:    "pre_ap1_non_empty_header",
+			block:   cchaintest.NewTestBlock(t, cchaintest.WithNumber(1)),
+			wantErr: errExtDataHashMismatch,
+		},
+		{
+			// Pre-AP1 block with the correct zero header hash but with extData in
+			// the body: the body hash doesn't match the expected empty value.
+			name:    "pre_ap1_unexpected_extdata",
+			block:   preAP1WithExtData,
+			wantErr: errExtDataUnexpectedHash,
 		},
 		{
 			name:    "invalid_version",
