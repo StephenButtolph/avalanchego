@@ -103,6 +103,8 @@ func (vm *VM) Initialize(
 	if err != nil {
 		return fmt.Errorf("parsing genesis: %w", err)
 	}
+	vm.chainConfig = genesis.Config
+
 	genesisBlock, err := genesis.setup(ethDB, trieDBConfig)
 	if err != nil {
 		return fmt.Errorf("setting up genesis: %w", err)
@@ -134,7 +136,6 @@ func (vm *VM) Initialize(
 		},
 		Now: vm.now,
 	}
-	vm.chainConfig = genesis.Config
 	vm.VM, err = sae.NewVM(ctx, hooks, saeConfig, snowCtx, vm.chainConfig, ethDB, genesisBlock, appSender)
 	if err != nil {
 		return fmt.Errorf("creating SAE VM: %w", err)
@@ -212,12 +213,12 @@ var (
 	// errInvalidBlockVersion is returned by [VM.ParseBlock] when a block's
 	// BlockBodyExtra carries a Version other than 0, the only supported version.
 	errInvalidBlockVersion = errors.New("invalid block version")
-	// errExtDataHashMismatch is returned by [VM.ParseBlock] when a block's
-	// extData does not hash to the ExtDataHash committed in its header.
-	errExtDataHashMismatch = errors.New("extData hash does not match header")
 	// errExtDataUnexpectedHash is returned by [VM.ParseBlock] when a block's
 	// extData does not correspond to the hardcoded ExtDataHash.
 	errExtDataUnexpectedHash = errors.New("extData hash does not match expected value")
+	// errExtDataHashMismatch is returned by [VM.ParseBlock] when a block's
+	// extData does not hash to the ExtDataHash committed in its header.
+	errExtDataHashMismatch = errors.New("extData hash does not match header")
 
 	//go:embed extdata-fuji.json
 	fujiExtDataHashes []byte
@@ -271,22 +272,19 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 			gotBytes       = customtypes.BlockExtData(eth)
 			gotHash        = customtypes.CalcExtDataHash(gotBytes)
 			wantHeaderHash = gotHash
-			wantHash       = gotHash
 		)
 		if eth.NumberU64() == 0 || !corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time()) {
 			wantHeaderHash = ethcommon.Hash{}
+			wantHash := customtypes.EmptyExtDataHash
 			if want, ok := extDataHashes[vm.ctx.NetworkID][eth.NumberU64()]; ok {
 				wantHash = want
-			} else {
-				wantHash = customtypes.EmptyExtDataHash
+			}
+			if gotHash != wantHash {
+				return nil, fmt.Errorf("%w: have %x, want %x", errExtDataUnexpectedHash, gotHash, wantHash)
 			}
 		}
-
 		if got := customtypes.GetHeaderExtra(eth.Header()).ExtDataHash; got != wantHeaderHash {
 			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, got, wantHeaderHash)
-		}
-		if gotHash != wantHash {
-			return nil, fmt.Errorf("%w: have %x, want %x", errExtDataUnexpectedHash, gotHash, wantHash)
 		}
 	}
 	return b, nil
