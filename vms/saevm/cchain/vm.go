@@ -248,10 +248,9 @@ func init() {
 // is consistent with the header's ExtDataHash commitment.
 //
 // The block ID is the header hash. The header neither hashes the body's Version
-// nor its extData bytes (from ApricotPhase1 it commits only ExtDataHash, and
-// before then nothing at all), so a block with a tampered Version or extData
-// keeps the same ID. This override is the boundary that rejects such blocks
-// before they are accepted, persisted, or executed.
+// nor its extData bytes (it commits only ExtDataHash), so a block with a
+// tampered Version or extData keeps the same ID. This override is the boundary
+// that rejects such blocks before they are accepted, persisted, or executed.
 //
 // Genesis (block 0) always uses the pre-ApricotPhase1 extData rules regardless
 // of chain config: its legacy header left ExtDataHash empty, and bootstrapping
