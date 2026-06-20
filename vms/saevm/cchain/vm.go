@@ -23,7 +23,6 @@ import (
 	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
 	"github.com/ava-labs/avalanchego/graft/evm/utils/rpc"
-	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/p2p"
 	"github.com/ava-labs/avalanchego/network/p2p/gossip"
 	"github.com/ava-labs/avalanchego/snow"
@@ -31,7 +30,6 @@ import (
 	"github.com/ava-labs/avalanchego/utils/bloom"
 	"github.com/ava-labs/avalanchego/vms/evm/database"
 	"github.com/ava-labs/avalanchego/vms/saevm/blocks"
-	"github.com/ava-labs/avalanchego/vms/saevm/cchain/extdata"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/state"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/txpool"
 	"github.com/ava-labs/avalanchego/vms/saevm/sae"
@@ -53,12 +51,11 @@ type VM struct {
 	// now is the clock provided to the [sae.VM] and is used for block building.
 	now func() time.Time
 
-	ctx          *snow.Context
-	chainConfig  *ethparams.ChainConfig
-	genesisID    ids.ID
-	state        *state.State
-	txpool       *txpool.Txpool
-	gossipSet    *gossip.BloomSet[*gossipTx]
+	ctx         *snow.Context
+	chainConfig *ethparams.ChainConfig
+	state       *state.State
+	txpool      *txpool.Txpool
+	gossipSet   *gossip.BloomSet[*gossipTx]
 	pushGossiper *gossip.PushGossiper[*gossipTx]
 
 	// onClose are executed in reverse order during [VM.Shutdown]. If a resource
@@ -105,7 +102,6 @@ func (vm *VM) Initialize(
 	if err != nil {
 		return fmt.Errorf("setting up genesis: %w", err)
 	}
-	vm.genesisID = ids.ID(genesisBlock.Hash())
 
 	vm.state, err = state.New(snowCtx, avaDB)
 	if err != nil {
@@ -133,8 +129,8 @@ func (vm *VM) Initialize(
 		},
 		Now: vm.now,
 	}
-	chainConfig := genesis.Config
-	vm.VM, err = sae.NewVM(ctx, hooks, saeConfig, snowCtx, chainConfig, ethDB, genesisBlock, appSender)
+	vm.chainConfig = genesis.Config
+	vm.VM, err = sae.NewVM(ctx, hooks, saeConfig, snowCtx, vm.chainConfig, ethDB, genesisBlock, appSender)
 	if err != nil {
 		return fmt.Errorf("creating SAE VM: %w", err)
 	}
@@ -222,23 +218,13 @@ var errInvalidBlockVersion = errors.New("invalid block version")
 // keeps the same ID. This override is the boundary that rejects such blocks
 // before they are accepted, persisted, or executed.
 //
-// The extData check is delegated to [extdata.VerifyExtDataHash] so it stays
-// identical to coreth's, including the handling of pre-ApricotPhase1 blocks
-// (such as genesis) that left ExtDataHash empty. Bootstrapping fetches the full
-// ancestry, so these legacy blocks must parse here even on a post-Helicon node.
+// Genesis (block 0) always uses the pre-ApricotPhase1 extData rules regardless
+// of chain config: its legacy header left ExtDataHash empty, and bootstrapping
+// re-parses the full ancestry including genesis, so it must be accepted here.
 func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error) {
 	b, err := vm.VM.ParseBlock(ctx, buf)
 	if err != nil {
 		return nil, err
-	}
-
-	// Skip the C-Chain-specific checks for genesis, matching coreth: genesis is
-	// the trusted root that is already accepted and never verified, yet
-	// bootstrapping still re-parses it from the wire. Its legacy header left
-	// ExtDataHash empty, so the ApricotPhase1 check below would otherwise reject
-	// it on networks (e.g. local/e2e) where ApricotPhase1 is active at genesis.
-	if b.ID() == vm.genesisID {
-		return b, nil
 	}
 
 	eth := b.EthBlock()
@@ -246,8 +232,10 @@ func (vm *VM) ParseBlock(ctx context.Context, buf []byte) (*blocks.Block, error)
 		return nil, fmt.Errorf("%w: %d", errInvalidBlockVersion, version)
 	}
 
-	isApricotPhase1 := corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time())
-	if err := extdata.VerifyExtDataHash(isApricotPhase1, eth, extdata.Hashes(vm.ctx.NetworkID)); err != nil {
+	// Genesis (block 0) predates ApricotPhase1 on every network, so always
+	// apply the pre-AP1 extData rules for it regardless of chain config.
+	isApricotPhase1 := eth.NumberU64() != 0 && corethparams.GetExtra(vm.chainConfig).IsApricotPhase1(eth.Time())
+	if err := verifyExtDataHash(isApricotPhase1, eth, extDataHashes(vm.ctx.NetworkID)); err != nil {
 		return nil, err
 	}
 	return b, nil

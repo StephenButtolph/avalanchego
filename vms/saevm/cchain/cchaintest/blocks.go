@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/vms/saevm/cchain/tx"
 	"github.com/ava-labs/avalanchego/vms/saevm/saetest"
 )
@@ -29,6 +30,7 @@ type blockProperties struct {
 	parent        common.Hash
 	ethTxs        []*types.Transaction
 	crossChainTxs []*tx.Tx
+	extDataHash   *common.Hash
 	version       uint32
 }
 
@@ -91,8 +93,12 @@ func NewTestBlock(tb testing.TB, opts ...BlockOption) *types.Block {
 	extData, err := tx.MarshalSlice(props.crossChainTxs)
 	require.NoErrorf(tb, err, "tx.MarshalSlice(%d txs)", len(props.crossChainTxs))
 
-	// The header commits the ExtDataHash computed from the block's own ExtData.
+	// By default the header commits the ExtDataHash computed from the block's
+	// own ExtData; a caller-supplied hash overrides this to simulate tampering.
 	extDataHash := customtypes.CalcExtDataHash(extData)
+	if props.extDataHash != nil {
+		extDataHash = *props.extDataHash
+	}
 	header := customtypes.WithHeaderExtra(
 		&types.Header{
 			ParentHash: props.parent,
@@ -110,9 +116,30 @@ func NewTestBlock(tb testing.TB, opts ...BlockOption) *types.Block {
 	return block
 }
 
+// WithMismatchedExtDataHash commits a random ExtDataHash that does not match the
+// block's ExtData and disables recomputation, simulating a tampered block.
+func WithMismatchedExtDataHash() BlockOption {
+	return options.Func[blockProperties](func(p *blockProperties) {
+		h := common.Hash(ids.GenerateTestID())
+		p.extDataHash = &h
+	})
+}
+
 // NewBlock returns a block whose ExtData encodes txs and whose header is
 // configured for ancestor traversal (parent hash + number).
 func NewBlock(tb testing.TB, number uint64, parent common.Hash, txs ...*tx.Tx) *types.Block {
 	tb.Helper()
 	return NewTestBlock(tb, WithNumber(number), WithParent(parent), WithCrossChainTxs(txs...))
+}
+
+// NewTamperedBlock returns a block that encodes txs but whose header commits an
+// ExtDataHash that does not match its ExtData, simulating tampering.
+func NewTamperedBlock(tb testing.TB, number uint64, parent common.Hash, txs ...*tx.Tx) *types.Block {
+	tb.Helper()
+	return NewTestBlock(tb,
+		WithNumber(number),
+		WithParent(parent),
+		WithCrossChainTxs(txs...),
+		WithMismatchedExtDataHash(),
+	)
 }

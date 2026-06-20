@@ -1,16 +1,21 @@
 // Copyright (C) 2019, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
-package extdata
+package cchain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+
+	_ "embed"
 
 	"github.com/ava-labs/libevm/common"
 	"github.com/ava-labs/libevm/core/types"
 
 	"github.com/ava-labs/avalanchego/graft/coreth/plugin/evm/customtypes"
+	"github.com/ava-labs/avalanchego/utils/constants"
 )
 
 var (
@@ -29,20 +34,20 @@ var (
 	errRecordedExtDataHashMismatch = errors.New("extra data hash did not match the expected extra data hash")
 )
 
-// VerifyExtDataHash checks that ethBlock's extData is consistent with the
+// verifyExtDataHash checks that ethBlock's extData is consistent with the
 // commitment in its header, applying the rule that matches the block's upgrade.
 //
 // From ApricotPhase1 onward the header's ExtDataHash must equal the hash of the
 // block's extData. Before ApricotPhase1 the header's ExtDataHash must be empty,
 // and the extData is instead checked against hashes, the network's recorded set
-// of pre-ApricotPhase1 extData hashes keyed by block height (see [Hashes]): a
-// height present in the set must carry extData hashing to its recorded value,
-// and a height absent from it must carry none. A nil hashes (a network without a
-// recorded set) skips the pre-ApricotPhase1 extData check.
+// of pre-ApricotPhase1 extData hashes keyed by block height (see
+// [extDataHashes]): a height present in the set must carry extData hashing to
+// its recorded value, and a height absent from it must carry none. A nil hashes
+// (a network without a recorded set) skips the pre-ApricotPhase1 extData check.
 //
 // The logic mirrors coreth's atomic block verification so the SAE C-Chain
 // accepts exactly the same blocks coreth produced.
-func VerifyExtDataHash(isApricotPhase1 bool, ethBlock *types.Block, hashes map[uint64]common.Hash) error {
+func verifyExtDataHash(isApricotPhase1 bool, ethBlock *types.Block, hashes map[uint64]common.Hash) error {
 	headerExtra := customtypes.GetHeaderExtra(ethBlock.Header())
 
 	if !isApricotPhase1 {
@@ -78,4 +83,47 @@ func VerifyExtDataHash(isApricotPhase1 bool, ethBlock *types.Block, hashes map[u
 		return fmt.Errorf("%w: have %x, want %x", errExtDataHashMismatch, headerExtra.ExtDataHash, hash)
 	}
 	return nil
+}
+
+var (
+	//go:embed fuji.json
+	rawFujiHashes  []byte
+	fujiHashesOnce sync.Once
+	fujiHashes     map[uint64]common.Hash
+
+	//go:embed mainnet.json
+	rawMainnetHashes  []byte
+	mainnetHashesOnce sync.Once
+	mainnetHashes     map[uint64]common.Hash
+)
+
+// extDataHashes returns the recorded extData hashes of pre-ApricotPhase1 blocks
+// for the given network, keyed by block height, or nil for networks without a
+// recorded set (any network other than mainnet and fuji). The set is decoded
+// from the embedded data on first use and cached.
+func extDataHashes(networkID uint32) map[uint64]common.Hash {
+	switch networkID {
+	case constants.MainnetID:
+		mainnetHashesOnce.Do(func() {
+			mainnetHashes = decodeExtDataHashes(rawMainnetHashes)
+		})
+		return mainnetHashes
+	case constants.FujiID:
+		fujiHashesOnce.Do(func() {
+			fujiHashes = decodeExtDataHashes(rawFujiHashes)
+		})
+		return fujiHashes
+	default:
+		return nil
+	}
+}
+
+// decodeExtDataHashes unmarshals embedded hash data. The data is a compile-time
+// constant, so a failure here is a build defect rather than a runtime condition.
+func decodeExtDataHashes(raw []byte) map[uint64]common.Hash {
+	hashes := make(map[uint64]common.Hash)
+	if err := json.Unmarshal(raw, &hashes); err != nil {
+		panic(err)
+	}
+	return hashes
 }

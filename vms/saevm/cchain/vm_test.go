@@ -811,8 +811,6 @@ func TestParseBlock(t *testing.T) {
 	// SAE only runs the C-Chain post-Helicon, so all blocks parsed in normal
 	// operation are post-ApricotPhase1 and subject to the strict ExtDataHash
 	// check. Build the fixtures at the Helicon activation time to exercise it.
-	// The ExtDataHash rules themselves are covered by the extdata package; here
-	// we exercise the cchain-specific checks and that valid blocks round-trip.
 	postHelicon := *cparams.GetExtra(sut.chainConfig).HeliconTimestamp
 
 	tests := []struct {
@@ -827,6 +825,11 @@ func TestParseBlock(t *testing.T) {
 		{
 			name:  "valid_empty",
 			block: cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon)),
+		},
+		{
+			name:    "extdata_hash_mismatch",
+			block:   cchaintest.NewTestBlock(t, cchaintest.WithNumber(1), cchaintest.WithTimestamp(postHelicon), cchaintest.WithCrossChainTxs(tx1), cchaintest.WithMismatchedExtDataHash()),
+			wantErr: errExtDataHashMismatch,
 		},
 		{
 			name:    "invalid_version",
@@ -857,12 +860,16 @@ func TestParseBlock(t *testing.T) {
 func TestParseBlockAcceptsGenesis(t *testing.T) {
 	ctx, sut := newSUT(t)
 
-	genesis, err := sut.GetBlock(ctx, sut.genesisID)
+	// Genesis is the only accepted block at startup.
+	genesisID, err := sut.LastAccepted(ctx)
+	require.NoError(t, err, "vm.LastAccepted()")
+
+	genesis, err := sut.GetBlock(ctx, genesisID)
 	require.NoError(t, err, "vm.GetBlock(genesisID)")
 
 	got, err := sut.ParseBlock(ctx, genesis.Bytes())
 	require.NoError(t, err, "vm.ParseBlock(genesis)")
-	require.Equal(t, sut.genesisID, got.ID(), "vm.ParseBlock(genesis) block ID")
+	require.Equal(t, genesisID, got.ID(), "vm.ParseBlock(genesis) block ID")
 }
 
 // TestVerifyBlockRejectsMismatchedTime verifies that the VM rejects a received
