@@ -811,6 +811,72 @@ func TestMinGasConsumptionFloor(t *testing.T) {
 	assert.Equalf(t, *wantBalance, sut.balance(t, sender), "sender balance reflects gas charged")
 }
 
+// TestGasRefundsDisabled asserts that, under the latest network upgrade rules,
+// EVM gas refunds are disabled: a transaction that clears a storage slot is
+// charged the full execution gas with no EIP-3529 refund credited back.
+//
+// coreth's RulesExtra.ShouldRefundGas (graft/coreth/params/hooks_libevm.go)
+// reports false once ApricotPhase1 is active, and the default SUT runs with every
+// upgrade enabled, so the refund must be suppressed.
+func TestGasRefundsDisabled(t *testing.T) {
+	w := saetest.NewUNSAFEWallet(t, 1, types.LatestSigner(saetest.ChainConfig()))
+	sender := w.Addresses()[0]
+
+	// A pre-deployed contract whose runtime clears storage slot 0:
+	//   PUSH1 0x00 (value); PUSH1 0x00 (key); SSTORE; STOP
+	// Slot 0 is seeded to 1 so the SSTORE transitions non-zero -> zero, which
+	// schedules an EIP-3529 refund that the upgrade rules must suppress.
+	contract := common.HexToAddress("0xc0de")
+	runtimeCode := []byte{
+		0x60, 0x00, // PUSH1 0x00 (value)
+		0x60, 0x00, // PUSH1 0x00 (key)
+		0x55, // SSTORE
+		0x00, // STOP
+	}
+	ctx, sut := newSUT(t, options.Func[sutConfig](func(c *sutConfig) {
+		alloc := saetest.MaxAllocFor(sender)
+		alloc[contract] = types.Account{
+			Code:    runtimeCode,
+			Storage: map[common.Hash]common.Hash{{}: common.BytesToHash([]byte{1})},
+			Balance: big.NewInt(0),
+		}
+		c.genesis.Alloc = alloc
+	}))
+
+	// Charging the call:
+	//   - base TxGas (no calldata, no access list)
+	//   - two PUSH1s == 2 * pushGas
+	//   - clearing a cold, originally-nonzero slot == SstoreResetGasEIP2200
+	// With refunds enabled, the EIP-3529 refund of
+	// SstoreClearsScheduleRefundEIP3529 would be credited back; here it must not.
+	const pushGas = 3 // core/vm.GasFastestStep, the cost of PUSH1.
+	var (
+		wantGasUsed   = ethparams.TxGas + 2*pushGas + ethparams.SstoreResetGasEIP2200
+		gasIfRefunded = wantGasUsed - ethparams.SstoreClearsScheduleRefundEIP3529
+	)
+
+	// gasLimit is chosen so the ACP-194 floor (ceil(gasLimit/2)) sits below the
+	// would-be refunded cost, leaving the refund's effect observable in GasUsed.
+	const gasLimit = 30_000
+	require.Greaterf(t, gasIfRefunded, uint64(gasLimit/2), "test setup: ACP-194 floor must not mask the refund")
+	require.GreaterOrEqualf(t, uint64(gasLimit), wantGasUsed, "test setup: gasLimit must cover the un-refunded cost")
+
+	tx := w.SetNonceAndSign(t, 0, &types.DynamicFeeTx{
+		To:        &contract,
+		Gas:       gasLimit,
+		GasFeeCap: big.NewInt(1),
+	})
+	require.NoErrorf(t, sut.ethclient.SendTransaction(ctx, tx), "%T.SendTransaction()", sut.ethclient)
+	sut.waitForPendingEthTxs(ctx, t, tx)
+
+	blk := sut.runConsensusLoop(ctx, t)
+	require.Lenf(t, blk.Receipts(), 1, "%T.Receipts()", blk)
+	receipt := blk.Receipts()[0]
+
+	require.Equal(t, types.ReceiptStatusSuccessful, receipt.Status, "tx status")
+	assert.Equalf(t, wantGasUsed, receipt.GasUsed, "gas charged (would be %d if refunds were enabled)", gasIfRefunded)
+}
+
 // TestParseBlock verifies that the cchain ParseBlock override accepts
 // well-formed blocks and rejects blocks with an unsupported (non-zero) version
 // or whose extData does not match the ExtDataHash committed in the header.
