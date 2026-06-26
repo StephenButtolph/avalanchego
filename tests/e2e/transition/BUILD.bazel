@@ -1,0 +1,22 @@
+load("//.bazel:defs.bzl", "go_test")
+
+go_test(
+    name = "transition_test",
+    srcs = ["transition_test.go"],
+    tags = ["manual"],  # keep
+    deps = [
+        "//graft/coreth/ethclient",
+        "//graft/coreth/plugin/evm",
+        "//tests",
+        "//tests/fixture/e2e",
+        "//tests/fixture/tmpnet",
+        "//tests/fixture/tmpnet/flags",
+        "//upgrade/upgradetest",
+        "//utils/crypto/secp256k1",
+        "//utils/units",
+        "@com_github_ava_labs_libevm//core/types",
+        "@com_github_onsi_ginkgo_v2//:ginkgo",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
