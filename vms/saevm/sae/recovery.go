@@ -62,7 +62,7 @@ func (rec *recovery) lastCommittedBlock() (_ *blocks.Block, retErr error) {
 	}
 	lastSettledHeight := rawdb.ReadHeaderNumber(rec.db, lastSettledHash)
 	if lastSettledHeight == nil {
-		return nil, fmt.Errorf("%w: finalized block %#x has no number", errIncompleteRecoveryState, lastSettledHash)
+		return nil, fmt.Errorf("%w: no height for finalized block", errIncompleteRecoveryState)
 	}
 
 	// Search for first settled post-execution state
