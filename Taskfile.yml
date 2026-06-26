@@ -477,6 +477,14 @@ tasks:
       - task: build-xsvm
       - cmd: '{{.NIX_RUN}} bash -x ./scripts/tests.e2e.existing.sh {{.CLI_ARGS}}'
 
+  test-e2e-transition:
+    desc: Tests the activation of the latest upgrade [serially with race detection enabled]
+    env:
+      E2E_SERIAL: 1
+    cmds:
+      - task: build-race
+      - cmd: '{{.NIX_RUN}} bash -x ./scripts/tests.e2e.transition.sh {{.CLI_ARGS}}'
+
   test-e2e-kube:
     desc: Runs e2e tests against a network deployed to kube
     cmds:
