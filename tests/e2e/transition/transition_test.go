@@ -131,9 +131,21 @@ var _ = ginkgo.Describe("[Latest Upgrade]", func() {
 			"network bootstrap consumed the pre-upgrade window; increase --latest-activation-delay",
 		)
 
+		// Track the nonce locally rather than re-reading the accepted nonce before
+		// each transaction. The accepted nonce is not guaranteed to reflect a
+		// transaction whose receipt was just returned, so re-reading it can
+		// resubmit a duplicate ("already known") under the tight loop below.
+		nonce, err := ethClient.AcceptedNonceAt(tc.DefaultContext(), senderKey.EthAddress())
+		require.NoError(err)
+		issue := func() *types.Receipt {
+			receipt := issueEthTransfer(tc, ethClient, senderKey, nonce)
+			nonce++
+			return receipt
+		}
+
 		tc.By("issuing C-Chain transactions before the latest upgrade")
-		issueEthTransfer(tc, ethClient, senderKey)
-		issueEthTransfer(tc, ethClient, senderKey)
+		issue()
+		issue()
 		preUpgradeBlockNumber, err := ethClient.BlockNumber(tc.DefaultContext())
 		require.NoError(err)
 		tc.Log().Info("issued transactions before the latest upgrade",
@@ -146,7 +158,7 @@ var _ = ginkgo.Describe("[Latest Upgrade]", func() {
 		// blocks until each transaction is accepted, so the loop is self-paced.
 		tc.By("issuing C-Chain transactions until the chain transitions to the latest upgrade")
 		for {
-			receipt := issueEthTransfer(tc, ethClient, senderKey)
+			receipt := issue()
 
 			header, err := ethClient.HeaderByNumber(tc.DefaultContext(), receipt.BlockNumber)
 			require.NoError(err)
@@ -156,8 +168,8 @@ var _ = ginkgo.Describe("[Latest Upgrade]", func() {
 		}
 
 		tc.By("issuing C-Chain transactions after the latest upgrade")
-		issueEthTransfer(tc, ethClient, senderKey)
-		issueEthTransfer(tc, ethClient, senderKey)
+		issue()
+		issue()
 
 		tc.By("confirming the C-Chain continued to produce blocks across the upgrade")
 		postUpgradeBlockNumber, err := ethClient.BlockNumber(tc.DefaultContext())
@@ -176,17 +188,16 @@ var _ = ginkgo.Describe("[Latest Upgrade]", func() {
 	})
 })
 
-// issueEthTransfer issues a self-transfer eth transaction on the C-Chain, waits
-// for it to be accepted, and returns its receipt.
+// issueEthTransfer issues a self-transfer eth transaction on the C-Chain with the
+// given nonce, waits for it to be accepted, and returns its receipt.
 func issueEthTransfer(
 	tc tests.TestContext,
 	ethClient *ethclient.Client,
 	senderKey *secp256k1.PrivateKey,
+	nonce uint64,
 ) *types.Receipt {
 	ctx := tc.DefaultContext()
 	addr := senderKey.EthAddress()
-	nonce, err := ethClient.AcceptedNonceAt(ctx, addr)
-	require.NoError(tc, err)
 
 	gasPrice := e2e.SuggestGasPrice(tc, ethClient)
 	tx := types.NewTx(&types.LegacyTx{
