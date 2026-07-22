@@ -88,6 +88,24 @@ func GenerateComposeConfig(network *tmpnet.Network, baseImageName string) error 
 	return nil
 }
 
+// WriteGuestScript writes an executable guest script to the root of the config
+// image (the target path). Before bringing the network up with `docker-compose
+// up`, Antithesis's basic_test searches the root of the config image for a
+// script named `guest` or `guest.*` and, if exactly one is found, executes it
+// on the host. This provides a hook to configure the host prior to network
+// start (e.g. to set the system clock).
+func WriteGuestScript(content string) error {
+	targetPath := os.Getenv(targetPathEnvName)
+	if len(targetPath) == 0 {
+		return errTargetPathEnvVarNotSet
+	}
+	scriptPath := filepath.Join(targetPath, "guest.sh")
+	if err := os.WriteFile(scriptPath, []byte(content), perms.ReadWriteExecute); err != nil {
+		return fmt.Errorf("failed to write guest script: %w", err)
+	}
+	return nil
+}
+
 // Initialize the given path with the docker compose configuration (compose file and
 // volumes) needed for an Antithesis test setup.
 func initComposeConfig(
